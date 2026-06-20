@@ -40,8 +40,8 @@ const corsOptions = {
             'http://127.0.0.1:5500', 'http://localhost:5500',
             'http://127.0.0.1:5501', 'http://localhost:5501',
             'http://127.0.0.1:3000', 'http://localhost:3000',
-            'https://remarkable-amazon1.zeven.netlify.app', // Tambahkan ini!
-            // Bisa juga pakai regex untuk semua subdomain netlify.app
+            'https://remarkable-amazon1.zeven.netlify.app',
+            'https://remarkable-maamoul-67e82f.netlify.app',
         ];
         if (!origin || allowedOrigins.includes(origin) || /^https?:\/\/(.*\.)?netlify\.app$/.test(origin)) {
             return callback(null, true);
