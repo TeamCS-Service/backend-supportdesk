@@ -129,6 +129,13 @@ io.on('connection', async (socket) => {
         }
     }
 
+    // Join personal user room — dipanggil user-dashboard.html setelah connect
+    socket.on('join-user', (userId) => {
+        const roomKey = `user_${userId}`;
+        socket.join(roomKey);
+        console.log(`Socket ${socket.user?.id} joined personal room ${roomKey}`);
+    });
+
     socket.on('join-topic', (topicId) => {
         const topicKey = `topic_${topicId}`;
         if (!socket.joinedTopics.has(topicKey)) {
@@ -706,9 +713,25 @@ app.post('/api/topic/:topicId/message', verifyToken, async (req, res) => {
             [message, senderName, senderRole, topicId]
         );
 
+        // Ambil topic_name agar notification-bell.js bisa menampilkan nama percakapan
+        let topicName = 'Percakapan';
+        let topicOwnerId = null;
+        try {
+            const topicInfo = await pool.query(
+                'SELECT topic_name, created_by FROM chat_topics WHERE topic_id = $1', [topicId]
+            );
+            if (topicInfo.rows.length > 0) {
+                topicName = topicInfo.rows[0].topic_name || 'Percakapan';
+                topicOwnerId = topicInfo.rows[0].created_by;
+            }
+        } catch (tErr) {
+            console.error('⚠️ Gagal ambil topic_name:', tErr.message);
+        }
+
         const fullMessage = {
             id: newMsg.id,
             topic_id: parseInt(topicId),
+            topic_name: topicName,
             sender_uid: String(req.user.id),
             sender_name: senderName,
             sender_role: senderRole,
@@ -719,6 +742,18 @@ app.post('/api/topic/:topicId/message', verifyToken, async (req, res) => {
         };
 
         io.to(`topic_${topicId}`).emit('new-message', fullMessage);
+
+        // Jika pengirim adalah staff, emit juga ke room personal pemilik topik
+        // agar user mendapat notifikasi walaupun tidak sedang di topik tersebut
+        if (senderRole === 'staff' && topicOwnerId) {
+            try {
+                io.to(`user_${topicOwnerId}`).emit('new-message', fullMessage);
+                console.log(`[Socket] Notif dikirim ke user_${topicOwnerId} untuk topic_${topicId}`);
+            } catch (ownerErr) {
+                console.error('⚠️ Gagal emit ke user room:', ownerErr.message);
+            }
+        }
+
         res.json({ success: true, message: fullMessage });
     } catch (err) {
         console.error('Send message error:', err);
@@ -772,9 +807,23 @@ app.post('/api/topic/:topicId/resolve', verifyToken, async (req, res) => {
             [topicId, String(req.user.id), senderName, resolveMsg]
         );
 
+        // Ambil topic_name untuk notifikasi resolve
+        let resolveTopicName = 'Percakapan';
+        let resolveOwnerId = null;
+        try {
+            const resolveTopicInfo = await pool.query(
+                'SELECT topic_name, created_by FROM chat_topics WHERE topic_id = $1', [topicId]
+            );
+            if (resolveTopicInfo.rows.length > 0) {
+                resolveTopicName = resolveTopicInfo.rows[0].topic_name || 'Percakapan';
+                resolveOwnerId = resolveTopicInfo.rows[0].created_by;
+            }
+        } catch (e2) { console.error('⚠️ Gagal ambil topic_name (resolve):', e2.message); }
+
         const fullMessage = {
             id: msgResult.rows[0].id,
             topic_id: parseInt(topicId),
+            topic_name: resolveTopicName,
             sender_uid: String(req.user.id),
             sender_name: senderName,
             sender_role: 'staff',
@@ -784,6 +833,13 @@ app.post('/api/topic/:topicId/resolve', verifyToken, async (req, res) => {
             created_at: msgResult.rows[0].created_at
         };
         io.to(`topic_${topicId}`).emit('new-message', fullMessage);
+
+        // Emit juga ke room personal pemilik topik
+        if (resolveOwnerId) {
+            try {
+                io.to(`user_${resolveOwnerId}`).emit('new-message', fullMessage);
+            } catch (e) { console.error('⚠️ Resolve emit user room error:', e.message); }
+        }
 
         res.json({ success: true });
     } catch (err) {
