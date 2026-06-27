@@ -376,6 +376,36 @@ async function canAccessTopic(userId, topicId, role) {
     }
 })();
 
+// ==================== SEED GLOBAL TOPICS ====================
+// Menambahkan topik global default jika belum ada, agar user baru otomatis mendapat topik.
+(async function seedGlobalTopics() {
+    try {
+        const check = await pool.query(
+            `SELECT COUNT(*) FROM chat_topics WHERE created_by IS NULL`
+        );
+        if (parseInt(check.rows[0].count) === 0) {
+            const defaultTopics = [
+                { name: 'General', desc: 'Topik umum untuk semua pertanyaan', icon: 'fa-comment', color: '#6366f1' },
+                { name: 'Billing', desc: 'Pertanyaan terkait tagihan dan pembayaran', icon: 'fa-credit-card', color: '#10b981' },
+                { name: 'Technical', desc: 'Masalah teknis dan bug', icon: 'fa-code', color: '#f59e0b' },
+                { name: 'Feature Request', desc: 'Saran untuk fitur baru', icon: 'fa-lightbulb', color: '#8b5cf6' }
+            ];
+            for (const t of defaultTopics) {
+                await pool.query(
+                    `INSERT INTO chat_topics (topic_name, topic_description, topic_icon, topic_color, created_by, created_at)
+                     VALUES ($1, $2, $3, $4, NULL, NOW())`,
+                    [t.name, t.desc, t.icon, t.color]
+                );
+            }
+            console.log('✅ Seeded default global topics');
+        } else {
+            console.log('✅ Global topics already exist');
+        }
+    } catch (err) {
+        console.warn('⚠️ Seeding global topics warning:', err.message);
+    }
+})();
+
 async function createPrivateTopicsForUser(userId, userName) {
     const globalTopics = await pool.query(
         `SELECT DISTINCT ON (topic_name) topic_name, topic_description, 
@@ -1777,7 +1807,7 @@ app.post('/api/masteragent-history', verifyToken, async (req, res) => {
         }
         const result = await pool.query(
             `INSERT INTO masteragent_history (category, amount, before_credit, after_credit, user_id, user_name, user_email, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, NOW()) RETURNING *`,
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW()) RETURNING *`,
             [category, amount, before || 0, after || 0, req.user.id, user_name || req.user.name, user_email || req.user.email]
         );
         res.status(201).json(result.rows[0]);
@@ -1920,7 +1950,7 @@ app.post('/api/masteragent-topup', verifyToken, async (req, res) => {
         const userName = req.user.name || req.user.email?.split('@')[0] || 'User';
         const histRes = await pool.query(
             `INSERT INTO masteragent_history (category, amount, before_credit, after_credit, user_id, user_name, user_email, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, NOW()) RETURNING *`,
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW()) RETURNING *`,
             [category, amount, currentCredit, newCredit, req.user.id, userName, req.user.email]
         );
 
