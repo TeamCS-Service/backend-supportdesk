@@ -15,12 +15,6 @@ const JWT_SECRET = process.env.JWT_SECRET || 'supersecretkeychangeit';
 const MAX_CREDIT_AMOUNT = 1_000_000_000_000; // 10^12
 
 // ==================== SAFETY NET: JANGAN BIARKAN PROSES CRASH DIAM-DIAM ====================
-// Jika ada query/promise yang gagal tanpa try/catch (mis. di handler socket.io),
-// Node akan mematikan SELURUH proses (unhandled rejection). Itu membuat backend
-// mati setiap kali ada koneksi/disconnect socket yang gagal query DB, sehingga
-// SEMUA fetch dari frontend gagal dengan "NetworkError" sampai server di-restart manual.
-// Listener ini hanya sebagai jaring pengaman terakhir; akar masalah tetap diperbaiki
-// dengan menambahkan try/catch di setiap handler (lihat di bawah).
 process.on('unhandledRejection', (reason) => {
     console.error('⚠️ Unhandled Promise Rejection (server TIDAK dimatikan):', reason);
 });
@@ -29,13 +23,8 @@ process.on('uncaughtException', (err) => {
 });
 
 // ==================== CORS (HANYA SEKALI) ====================
-// Origin di-whitelist secara eksplisit untuk dev (Live Server biasanya jalan di
-// 127.0.0.1:5500 atau localhost:5500/5501). Jika ORIGIN tidak dikenali dan bukan
-// permintaan tanpa origin (curl/Postman), tetap diizinkan agar dev tidak terblokir,
-// tapi origin yang dikenal akan selalu mendapat header yang benar secara konsisten.
 const corsOptions = {
     origin: (origin, callback) => {
-        // Tambahkan domain Netlify Anda
         const allowedOrigins = [
             'http://127.0.0.1:5500', 'http://localhost:5500',
             'http://127.0.0.1:5501', 'http://localhost:5501',
@@ -46,22 +35,35 @@ const corsOptions = {
         if (!origin || allowedOrigins.includes(origin) || /^https?:\/\/(.*\.)?netlify\.app$/.test(origin)) {
             return callback(null, true);
         }
-        return callback(null, true); // tetap permisif untuk development
+        return callback(new Error('Not allowed by CORS'));
     },
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization']
 };
 app.use(cors(corsOptions));
-// Catatan: TIDAK perlu app.options('*', cors(corsOptions)) secara manual.
-// app.use(cors(...)) di atas SUDAH otomatis menjawab preflight OPTIONS untuk
-// semua route. Mendaftarkan '*' secara eksplisit justru bisa crash di versi
-// path-to-regexp terbaru (dipakai express/router) yang sudah tidak menerima
-// wildcard '*' polos -> "PathError: Missing parameter name at index 1: *".
 
 app.use(express.json({ limit: '20mb' }));
 
-// Endpoint health-check sederhana untuk memastikan backend benar-benar terjangkau
-// dari browser sebelum debugging endpoint lain. Tidak perlu token.
+// ==================== HEADER KEAMANAN ====================
+app.use((req, res, next) => {
+    // Content Security Policy (CSP) - sesuaikan dengan domain Anda
+    res.setHeader('Content-Security-Policy',
+        "default-src 'self'; " +
+        "script-src 'self' https://cdn.socket.io https://cdnjs.cloudflare.com 'unsafe-inline' 'unsafe-eval'; " +
+        "style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; " +
+        "font-src 'self' https://fonts.gstatic.com; " +
+        "img-src 'self' data: https://ui-avatars.com; " +
+        "connect-src 'self' https://generous-liberation-production-dd79.up.railway.app wss://generous-liberation-production-dd79.up.railway.app; " +
+        "frame-ancestors 'none';"
+    );
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    next();
+});
+
+// Endpoint health-check
 app.get('/api/health', (req, res) => {
     res.json({ ok: true, time: new Date().toISOString() });
 });
@@ -81,9 +83,8 @@ const storage = multer.diskStorage({
         cb(null, uniqueSuffix + '-' + file.originalname);
     }
 });
-const upload = multer({ storage: storage, limits: { fileSize: 20 * 1024 * 1024 } }); // 20MB
+const upload = multer({ storage: storage, limits: { fileSize: 20 * 1024 * 1024 } });
 
-// Sajikan file statis dari folder uploads
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 const server = http.createServer(app);
@@ -115,11 +116,6 @@ io.on('connection', async (socket) => {
     console.log(`Socket connected: ${socket.user?.id} (${socket.user?.role})`);
     socket.joinedTopics = new Set();
 
-    // PENTING: query ini TIDAK BOLEH tanpa try/catch. Tanpa try/catch, jika query
-    // gagal (misal kolom is_online/last_seen belum ada di tabel users, atau DB
-    // sempat putus), promise akan reject tanpa ditangani -> Node mematikan SELURUH
-    // proses server. Inilah penyebab paling umum dari "NetworkError" yang muncul
-    // berulang kali di frontend: backend mati setiap kali ada koneksi socket baru.
     if (socket.user?.id) {
         try {
             await pool.query('UPDATE users SET is_online = true, last_seen = NOW() WHERE id = $1', [socket.user.id]);
@@ -129,11 +125,16 @@ io.on('connection', async (socket) => {
         }
     }
 
-    // Join personal user room — dipanggil user-dashboard.html setelah connect
     socket.on('join-user', (userId) => {
         const roomKey = `user_${userId}`;
         socket.join(roomKey);
         console.log(`Socket ${socket.user?.id} joined personal room ${roomKey}`);
+    });
+
+    socket.on('join-staff', (staffId) => {
+        const roomKey = `user_${staffId}`;
+        socket.join(roomKey);
+        console.log(`Staff ${socket.user?.id} joined personal room ${roomKey}`);
     });
 
     socket.on('join-topic', (topicId) => {
@@ -384,7 +385,6 @@ async function canAccessTopic(userId, topicId, role) {
 })();
 
 // ==================== SEED GLOBAL TOPICS ====================
-// Menambahkan topik global default jika belum ada, agar user baru otomatis mendapat topik.
 (async function seedGlobalTopics() {
     try {
         const check = await pool.query(
@@ -713,25 +713,9 @@ app.post('/api/topic/:topicId/message', verifyToken, async (req, res) => {
             [message, senderName, senderRole, topicId]
         );
 
-        // Ambil topic_name agar notification-bell.js bisa menampilkan nama percakapan
-        let topicName = 'Percakapan';
-        let topicOwnerId = null;
-        try {
-            const topicInfo = await pool.query(
-                'SELECT topic_name, created_by FROM chat_topics WHERE topic_id = $1', [topicId]
-            );
-            if (topicInfo.rows.length > 0) {
-                topicName = topicInfo.rows[0].topic_name || 'Percakapan';
-                topicOwnerId = topicInfo.rows[0].created_by;
-            }
-        } catch (tErr) {
-            console.error('⚠️ Gagal ambil topic_name:', tErr.message);
-        }
-
         const fullMessage = {
             id: newMsg.id,
             topic_id: parseInt(topicId),
-            topic_name: topicName,
             sender_uid: String(req.user.id),
             sender_name: senderName,
             sender_role: senderRole,
@@ -743,14 +727,66 @@ app.post('/api/topic/:topicId/message', verifyToken, async (req, res) => {
 
         io.to(`topic_${topicId}`).emit('new-message', fullMessage);
 
-        // Jika pengirim adalah staff, emit juga ke room personal pemilik topik
-        // agar user mendapat notifikasi walaupun tidak sedang di topik tersebut
-        if (senderRole === 'staff' && topicOwnerId) {
+        if (senderRole === 'staff') {
             try {
-                io.to(`user_${topicOwnerId}`).emit('new-message', fullMessage);
-                console.log(`[Socket] Notif dikirim ke user_${topicOwnerId} untuk topic_${topicId}`);
+                const topicOwner = await pool.query(
+                    'SELECT created_by, topic_name FROM chat_topics WHERE topic_id = $1', [topicId]
+                );
+                if (topicOwner.rows.length > 0 && topicOwner.rows[0].created_by) {
+                    const ownerId = topicOwner.rows[0].created_by;
+                    const tName = topicOwner.rows[0].topic_name || 'Percakapan';
+                    const msgWithTopic = { ...fullMessage, topic_name: tName };
+                    io.to(`user_${ownerId}`).emit('new-message', msgWithTopic);
+                    console.log(`[Socket] Notif -> user_${ownerId} (topic_${topicId})`);
+                }
             } catch (ownerErr) {
                 console.error('⚠️ Gagal emit ke user room:', ownerErr.message);
+            }
+        } else {
+            try {
+                const topicData = await pool.query(
+                    'SELECT assigned_agent_id, topic_name, created_by FROM chat_topics WHERE topic_id = $1',
+                    [topicId]
+                );
+                const tName = topicData.rows[0]?.topic_name || 'Percakapan';
+                const msgWithTopic = { ...fullMessage, topic_name: tName };
+
+                const notifiedSet = new Set();
+
+                const assignedAgentId = topicData.rows[0]?.assigned_agent_id;
+                if (assignedAgentId && String(assignedAgentId) !== String(req.user.id)) {
+                    io.to(`user_${assignedAgentId}`).emit('new-message', msgWithTopic);
+                    notifiedSet.add(String(assignedAgentId));
+                    console.log(`[Socket] Notif -> assigned agent user_${assignedAgentId} (topic_${topicId})`);
+                }
+
+                const admins = await pool.query(
+                    `SELECT id FROM users WHERE role IN ('admin', 'super_admin') AND id != $1`,
+                    [req.user.id]
+                );
+                for (const admin of admins.rows) {
+                    const adminKey = String(admin.id);
+                    if (!notifiedSet.has(adminKey)) {
+                        io.to(`user_${admin.id}`).emit('new-message', msgWithTopic);
+                        notifiedSet.add(adminKey);
+                    }
+                }
+
+                if (!assignedAgentId) {
+                    const staffList = await pool.query(
+                        `SELECT id FROM users WHERE role IN ('staff', 'agent') AND id != $1`,
+                        [req.user.id]
+                    );
+                    for (const staff of staffList.rows) {
+                        const staffKey = String(staff.id);
+                        if (!notifiedSet.has(staffKey)) {
+                            io.to(`user_${staff.id}`).emit('new-message', msgWithTopic);
+                            notifiedSet.add(staffKey);
+                        }
+                    }
+                }
+            } catch (notifErr) {
+                console.error('⚠️ Gagal emit notif ke staff/agent:', notifErr.message);
             }
         }
 
@@ -807,23 +843,9 @@ app.post('/api/topic/:topicId/resolve', verifyToken, async (req, res) => {
             [topicId, String(req.user.id), senderName, resolveMsg]
         );
 
-        // Ambil topic_name untuk notifikasi resolve
-        let resolveTopicName = 'Percakapan';
-        let resolveOwnerId = null;
-        try {
-            const resolveTopicInfo = await pool.query(
-                'SELECT topic_name, created_by FROM chat_topics WHERE topic_id = $1', [topicId]
-            );
-            if (resolveTopicInfo.rows.length > 0) {
-                resolveTopicName = resolveTopicInfo.rows[0].topic_name || 'Percakapan';
-                resolveOwnerId = resolveTopicInfo.rows[0].created_by;
-            }
-        } catch (e2) { console.error('⚠️ Gagal ambil topic_name (resolve):', e2.message); }
-
         const fullMessage = {
             id: msgResult.rows[0].id,
             topic_id: parseInt(topicId),
-            topic_name: resolveTopicName,
             sender_uid: String(req.user.id),
             sender_name: senderName,
             sender_role: 'staff',
@@ -834,12 +856,14 @@ app.post('/api/topic/:topicId/resolve', verifyToken, async (req, res) => {
         };
         io.to(`topic_${topicId}`).emit('new-message', fullMessage);
 
-        // Emit juga ke room personal pemilik topik
-        if (resolveOwnerId) {
-            try {
-                io.to(`user_${resolveOwnerId}`).emit('new-message', fullMessage);
-            } catch (e) { console.error('⚠️ Resolve emit user room error:', e.message); }
-        }
+        try {
+            const topicOwner2 = await pool.query(
+                'SELECT created_by FROM chat_topics WHERE topic_id = $1', [topicId]
+            );
+            if (topicOwner2.rows.length > 0 && topicOwner2.rows[0].created_by) {
+                io.to(`user_${topicOwner2.rows[0].created_by}`).emit('new-message', fullMessage);
+            }
+        } catch (e) { console.error('⚠️ Resolve emit user room error:', e.message); }
 
         res.json({ success: true });
     } catch (err) {
@@ -852,8 +876,6 @@ app.post('/api/topic/:topicId/resolve', verifyToken, async (req, res) => {
 app.post('/api/upload', verifyToken, (req, res) => {
     upload.single('file')(req, res, (err) => {
         if (err) {
-            // Tangkap error multer (mis. file terlalu besar) supaya respons tetap JSON
-            // dan tidak membuat fetch() di frontend gagal mem-parsing HTML/stack trace.
             console.error('Upload (multer) error:', err.message);
             return res.status(400).json({ error: err.message });
         }
@@ -1328,7 +1350,7 @@ app.post('/api/maintenance', verifyToken, async (req, res) => {
         const result = await pool.query(
             `INSERT INTO maintenance_reports 
              (id, title, category, provider, status, start_date, end_date, description, notes, user_id, created_by, date_created, date_updated)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW()) RETURNING *`,
+             VALUES ($1, $2, $3, $4, $5, $6::TIMESTAMPTZ, $7::TIMESTAMPTZ, $8, $9, $10, $11, NOW(), NOW()) RETURNING *`,
             [ticketId, title, category, provider, status, start_date, end_date, description || '', notes || '',
              req.user.id, userName]
         );
@@ -1346,7 +1368,7 @@ app.put('/api/maintenance/:id', verifyToken, async (req, res) => {
         const result = await pool.query(
             `UPDATE maintenance_reports SET
                 title = $1, category = $2, provider = $3, status = $4,
-                start_date = $5, end_date = $6, description = $7, notes = $8,
+                start_date = $5::TIMESTAMPTZ, end_date = $6::TIMESTAMPTZ, description = $7, notes = $8,
                 date_updated = NOW()
              WHERE id = $9 RETURNING *`,
             [title, category, provider, status, start_date, end_date, description, notes, id]
@@ -2244,10 +2266,7 @@ app.post('/api/feedback', verifyToken, async (req, res) => {
     }
 });
 
-// ==================== GLOBAL ERROR HANDLER (HARUS PALING BAWAH, SEBELUM listen) ====================
-// Menjaga supaya error yang lolos dari try/catch di route tetap dijawab dalam
-// format JSON (bukan halaman HTML default Express), agar res.json() di frontend
-// tidak ikut gagal dan menutupi pesan error aslinya.
+// ==================== GLOBAL ERROR HANDLER ====================
 app.use((err, req, res, next) => {
     console.error('Unhandled route error:', err);
     if (res.headersSent) return next(err);
@@ -2256,12 +2275,6 @@ app.use((err, req, res, next) => {
 
 // ==================== START SERVER ====================
 const PORT = process.env.PORT || 3000;
-// Binding eksplisit ke '0.0.0.0' (bukan biarkan default) agar server pasti menerima
-// koneksi IPv4 di semua interface. Di Windows, "localhost" terkadang di-resolve ke
-// ::1 (IPv6) lebih dulu; jika server hanya listen di IPv6 atau resolusi DNS lokal
-// bermasalah, fetch dari browser bisa gagal dengan "NetworkError" walau server hidup.
-// Jika frontend masih NetworkError setelah fix ini, coba akses backend lewat
-// 127.0.0.1:3000 (bukan localhost:3000) dan samakan di API_BASE frontend.
 server.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT} with Socket.io`);
     console.log(`   -> http://localhost:${PORT}`);
