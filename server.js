@@ -42,7 +42,27 @@ const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS
     : [];
 
 const corsOptions = {
-    origin: true,
+    origin: (origin, callback) => {
+        // Allow localhost for development
+        if (!origin || /^http:\/\/localhost(:\d+)?$/.test(origin) || /^http:\/\/127\.0\.0\.1(:\d+)?$/.test(origin)) {
+            return callback(null, true);
+        }
+
+        // ✅ GANTI INI DENGAN DOMAIN FRONTEND ANDA
+        const allowedOrigins = [
+            'https://dashboard-customer-service-support.css-ldwt.workers.dev', // Cloudflare Workers
+            'https://remarkable-amazon1.zeven.netlify.app', // Netlify (jika masih dipakai)
+            'https://your-custom-domain.com' // Tambahkan custom domain jika ada
+        ];
+
+        // Izinkan semua subdomain Cloudflare Pages (.pages.dev) jika pakai Pages
+        if (allowedOrigins.includes(origin) || /^https?:\/\/[^/]+\.pages\.dev$/.test(origin) || /^https?:\/\/[^/]+\.workers\.dev$/.test(origin)) {
+            return callback(null, true);
+        }
+
+        console.log("❌ CORS BLOCKED (aman):", origin);
+        return callback(null, false); // Jangan throw error, cukup false
+    },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
