@@ -43,25 +43,26 @@ const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS
 
 const corsOptions = {
     origin: (origin, callback) => {
-        // Allow localhost for development
-        if (!origin || /^http:\/\/localhost(:\d+)?$/.test(origin) || /^http:\/\/127\.0\.0\.1(:\d+)?$/.test(origin)) {
+        if (!origin) return callback(null, true);
+
+        // Localhost
+        if (/^http:\/\/localhost(:\d+)?$/.test(origin) || /^http:\/\/127\.0\.0\.1(:\d+)?$/.test(origin)) {
             return callback(null, true);
         }
 
-        // ✅ GANTI INI DENGAN DOMAIN FRONTEND ANDA
-        const allowedOrigins = [
-            'https://dashboard-customer-service-support.css-ldwt.workers.dev', // Cloudflare Workers
-            'https://remarkable-amazon1.zeven.netlify.app', // Netlify (jika masih dipakai)
-            'https://your-custom-domain.com' // Tambahkan custom domain jika ada
+        // Daftar origin yang diizinkan (menggunakan startsWith agar lebih longgar)
+        const allowed = [
+            'https://dashboard-customer-service-support.css-ldwt.workers.dev',
+            'https://remarkable-amazon1.zeven.netlify.app'
         ];
 
-        // Izinkan semua subdomain Cloudflare Pages (.pages.dev) jika pakai Pages
-        if (allowedOrigins.includes(origin) || /^https?:\/\/[^/]+\.pages\.dev$/.test(origin) || /^https?:\/\/[^/]+\.workers\.dev$/.test(origin)) {
+        if (allowed.some(domain => origin.startsWith(domain))) {
+            console.log("✅ CORS allowed:", origin);
             return callback(null, true);
         }
 
-        console.log("❌ CORS BLOCKED (aman):", origin);
-        return callback(null, false); // Jangan throw error, cukup false
+        console.log("❌ CORS blocked:", origin);
+        return callback(null, false);
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
