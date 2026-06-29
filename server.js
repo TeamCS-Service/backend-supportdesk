@@ -24,23 +24,7 @@ process.on('uncaughtException', (err) => {
 
 // ==================== CORS (HANYA SEKALI) ====================
 const corsOptions = {
-    origin: (origin, callback) => {
-        // Izinkan semua localhost dengan port berapa pun
-        if (!origin || /^http:\/\/localhost(:\d+)?$/.test(origin) || /^http:\/\/127\.0\.0\.1(:\d+)?$/.test(origin)) {
-            return callback(null, true);
-        }
-        // Domain production
-        const allowedOrigins = [
-            'https://remarkable-amazon1.zeven.netlify.app',
-            'https://remarkable-maamoul-67e82f.netlify.app',
-            'https://dashboard-customer-service-support.css-ldwt.workers.dev', // <-- Tambahkan ini
-        ];
-        if (allowedOrigins.includes(origin) || /^https?:\/\/(.*\.)?netlify\.app$/.test(origin) || /^https?:\/\/.*\.workers\.dev$/.test(origin)) {
-            return callback(null, true);
-        }
-        console.log('CORS blocked origin:', origin);
-        return callback(new Error('Not allowed by CORS'));
-    },
+    origin: true,   // ← izinkan semua
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization']
 };
