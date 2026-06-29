@@ -25,8 +25,8 @@ process.on('uncaughtException', (err) => {
 // ==================== CORS (HANYA SEKALI) ====================
 const corsOptions = {
     origin: (origin, callback) => {
-        // Izinkan semua localhost dengan port berapa pun
-        if (!origin || /^http:\/\/localhost(:\d+)?$/.test(origin) || /^http:\/\/127\.0\.0\.1(:\d+)?$/.test(origin)) {
+        // Izinkan semua origin dari localhost dan 127.0.0.1 (port berapa pun, dengan atau tanpa trailing slash)
+        if (!origin || /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?\/?$/.test(origin)) {
             return callback(null, true);
         }
         // Domain production
@@ -37,6 +37,8 @@ const corsOptions = {
         if (allowedOrigins.includes(origin) || /^https?:\/\/(.*\.)?netlify\.app$/.test(origin)) {
             return callback(null, true);
         }
+        // Log origin yang ditolak untuk debugging
+        console.log('CORS blocked origin:', origin);
         return callback(new Error('Not allowed by CORS'));
     },
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
