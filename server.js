@@ -10,9 +10,17 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 
-const app = express();
+app.use((req, res, next) => {
+    console.log("==================================");
+    console.log("METHOD :", req.method);
+    console.log("URL    :", req.originalUrl);
+    console.log("ORIGIN :", req.headers.origin);
+    console.log("==================================");
+    next();
+});
+
 const JWT_SECRET = process.env.JWT_SECRET || 'supersecretkeychangeit';
-const MAX_CREDIT_AMOUNT = 1_000_000_000_000; // 10^12
+const MAX_CREDIT_AMOUNT = 1_000_000_000_000;
 
 // ==================== SAFETY NET: JANGAN BIARKAN PROSES CRASH DIAM-DIAM ====================
 process.on('unhandledRejection', (reason) => {
