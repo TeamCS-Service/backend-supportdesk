@@ -2005,14 +2005,15 @@ app.post('/api/feedback', verifyToken, async (req, res) => {
 
 // ==================== GLOBAL ERROR HANDLER ====================
 app.use((err, req, res, next) => {
-    console.error('Unhandled route error:', err);
     if (res.headersSent) return next(err);
-    // Pastikan CORS headers tetap ada meski terjadi error
-    const origin = req.headers.origin;
-    if (origin) {
-        res.setHeader('Access-Control-Allow-Origin', origin);
-        res.setHeader('Access-Control-Allow-Credentials', 'true');
+
+    // Tangani error CORS secara khusus
+    if (err.message === 'Not allowed by CORS') {
+        console.log("❌ CORS blocked origin:", req.headers.origin);
+        return res.status(403).json({ error: 'CORS: Origin not allowed' });
     }
+
+    console.error('Unhandled route error:', err);
     res.status(500).json({ error: err.message || 'Internal server error' });
 });
 
