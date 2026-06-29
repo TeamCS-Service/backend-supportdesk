@@ -24,13 +24,49 @@ process.on('uncaughtException', (err) => {
 
 // ==================== CORS (HANYA SEKALI) ====================
 const corsOptions = {
-    origin: true,   // ← izinkan semua
+    origin: (origin, callback) => {
+        console.log("========== CORS ==========");
+        console.log("Origin:", origin);
+
+        // Request dari Postman/server
+        if (!origin) {
+            console.log("✅ No Origin");
+            return callback(null, true);
+        }
+
+        // Localhost
+        if (/^http:\/\/localhost(:\d+)?$/.test(origin)) {
+            console.log("✅ Localhost");
+            return callback(null, true);
+        }
+
+        if (/^http:\/\/127\.0\.0\.1(:\d+)?$/.test(origin)) {
+            console.log("✅ 127.0.0.1");
+            return callback(null, true);
+        }
+
+        // Netlify
+        if (/^https?:\/\/.*\.netlify\.app$/.test(origin)) {
+            console.log("✅ Netlify");
+            return callback(null, true);
+        }
+
+        // Cloudflare Workers
+        if (/^https?:\/\/.*\.workers\.dev$/.test(origin)) {
+            console.log("✅ Workers");
+            return callback(null, true);
+        }
+
+        console.log("❌ BLOCK:", origin);
+        callback(new Error("Not allowed by CORS"));
+    },
+
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization']
 };
-app.use(cors(corsOptions));
 
-app.use(express.json({ limit: '20mb' }));
+app.use(cors(corsOptions));
+app.options("*", cors(corsOptions));
 
 // ==================== HEADER KEAMANAN ====================
 app.use((req, res, next) => {
