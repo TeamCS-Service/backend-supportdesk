@@ -2002,9 +2002,6 @@ app.post('/api/masteragent-topup', verifyToken, async (req, res) => {
         if (!category || !amount || amount <= 0) {
             return res.status(400).json({ error: 'Invalid data' });
         }
-        if (amount > MAX_CREDIT_AMOUNT) {
-            return res.status(400).json({ error: `Amount cannot exceed ${MAX_CREDIT_AMOUNT}` });
-        }
 
         const creditResult = await pool.query(
             'SELECT * FROM credit_data WHERE category = $1',
@@ -2016,9 +2013,6 @@ app.post('/api/masteragent-topup', verifyToken, async (req, res) => {
 
         const currentCredit = Number(creditResult.rows[0].credit);
         const newCredit = currentCredit + amount;
-        if (newCredit > Number.MAX_SAFE_INTEGER) {
-            return res.status(400).json({ error: 'Resulting credit exceeds safe limit' });
-        }
 
         await pool.query(
             'UPDATE credit_data SET credit = $1, updated_at = NOW() WHERE category = $2',
@@ -2027,8 +2021,8 @@ app.post('/api/masteragent-topup', verifyToken, async (req, res) => {
 
         const userName = req.user.name || req.user.email?.split('@')[0] || 'User';
         const histRes = await pool.query(
-            `INSERT INTO masteragent_history (category, amount, before_credit, after_credit, user_id, user_name, user_email, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW()) RETURNING *`,
+            `INSERT INTO masteragent_history (category, amount, before_credit, after_credit, user_id, user_name, user_email)
+             VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
             [category, amount, currentCredit, newCredit, req.user.id, userName, req.user.email]
         );
 
