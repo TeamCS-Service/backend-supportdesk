@@ -40,24 +40,22 @@ process.on('uncaughtException', (err) => {
 // ==================== CORS (DIPERBAIKI) ====================
 const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS
     ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
-    : [];
+    : [
+        'https://dashboard-customer-service-support.css-ldwt.workers.dev',
+        'https://remarkable-amazon1.zeven.netlify.app'
+    ];
 
 const corsOptions = {
     origin: (origin, callback) => {
         if (!origin) return callback(null, true);
 
-        // Localhost
-        if (/^http:\/\/localhost(:\d+)?$/.test(origin) || /^http:\/\/127\.0\.0\.1(:\d+)?$/.test(origin)) {
+        if (/^http:\/\/localhost(:\d+)?$/.test(origin) || 
+            /^http:\/\/127\.0\.0\.1(:\d+)?$/.test(origin)) {
             return callback(null, true);
         }
 
-        // Daftar origin yang diizinkan (menggunakan startsWith agar lebih longgar)
-        const allowed = [
-            'https://dashboard-customer-service-support.css-ldwt.workers.dev',
-            'https://remarkable-amazon1.zeven.netlify.app'
-        ];
-
-        if (allowed.some(domain => origin.startsWith(domain))) {
+        // Gunakan === bukan startsWith
+        if (ALLOWED_ORIGINS.includes(origin)) {
             console.log("✅ CORS allowed:", origin);
             return callback(null, true);
         }
@@ -127,7 +125,7 @@ function generateIdeaId() {
     return crypto.randomBytes(5).toString('hex');
 }
 
-function verifyToken(req, res, next) {
+async function verifyToken(req, res, next) {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
         return res.status(401).json({ error: 'Unauthorized' });
@@ -135,6 +133,14 @@ function verifyToken(req, res, next) {
     const token = authHeader.split(' ')[1];
     try {
         const decoded = jwt.verify(token, JWT_SECRET);
+        // Cek status terkini dari database — bukan hanya percaya isi token
+        const statusCheck = await pool.query('SELECT status FROM users WHERE id = $1', [decoded.id]);
+        if (statusCheck.rows.length === 0) {
+            return res.status(401).json({ error: 'User not found' });
+        }
+        if (statusCheck.rows[0].status === 'suspended') {
+            return res.status(403).json({ error: 'Akun Anda telah di-suspend. Silakan hubungi administrator.' });
+        }
         req.user = decoded;
         next();
     } catch (err) {
@@ -495,9 +501,12 @@ app.post('/api/auth/login', async (req, res) => {
         const user = result.rows[0];
         const valid = await bcrypt.compare(password, user.password_hash);
         if (!valid) return res.status(401).json({ error: 'Password salah' });
+        if (user.status === 'suspended') {
+            return res.status(403).json({ success: false, error: 'Akun Anda telah di-suspend. Silakan hubungi administrator.' });
+        }
         await pool.query('UPDATE users SET last_login = NOW(), last_seen = NOW() WHERE id = $1', [user.id]);
         const token = jwt.sign({ id: user.id, email: user.email, role: user.role }, JWT_SECRET, { expiresIn: '7d' });
-        res.json({ success: true, user: { id: user.id, name: user.name, email: user.email, role: user.role }, token });
+        res.json({ success: true, user: { id: user.id, name: user.name, email: user.email, role: user.role, status: user.status }, token });
     } catch (err) {
         console.error('Login error:', err);
         res.status(500).json({ error: err.message });
@@ -2008,6 +2017,7 @@ app.post('/api/feedback', verifyToken, async (req, res) => {
 app.use((err, req, res, next) => {
     if (res.headersSent) return next(err);
 
+    // Tangani error CORS — jangan bocorkan header ke semua origin
     if (err.message === 'Not allowed by CORS') {
         console.log("❌ CORS blocked origin:", req.headers.origin);
         return res.status(403).json({ error: 'CORS: Origin not allowed' });
